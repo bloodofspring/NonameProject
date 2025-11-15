@@ -4,6 +4,7 @@ import (
 	"app/internal/handlers"
 	"app/internal/handlers/shared"
 	"fmt"
+	"sync"
 	"time"
 
 	"app/pkg/database"
@@ -15,6 +16,13 @@ import (
 )
 
 const AwaitMessageText = "Получил твоё сообщение! Скоро отвечу ;3"
+
+// awaitMessages хранит ID заглушек для каждого пользователя
+// ключ - ID пользователя, значение - ID сообщения-заглушки
+var (
+	awaitMessages = make(map[int64]int)
+	awaitMutex    sync.RWMutex
+)
 
 func NewMessageChain() *handlers.HandlerChain {
 	return handlers.HandlerChain{}.Init(
@@ -52,8 +60,8 @@ func SaveResentMessage(c tele.Context, args *handlers.Arg) (*handlers.Arg, *e.Er
 	}
 
 	resentMessage := &models.ResentMessage{
-		ThreadID: thread.ID,
-		ChatID: thread.ChatID,
+		ThreadID:            thread.ID,
+		ChatID:              thread.ChatID,
 		SenderChatMessageID: SenderChatMessageID,
 		TargetChatMessageID: TargetChatMessageID,
 	}
@@ -80,10 +88,28 @@ func RedirectMessageToThread(c tele.Context, args *handlers.Arg) (*handlers.Arg,
 
 func RedirectFromThreadToUser(c tele.Context, args *handlers.Arg) (*handlers.Arg, *e.ErrorInfo) {
 	thread := (*args)["thread"].(*models.Thread)
-	
+
+	// Удаляем заглушку, если она есть
+	awaitMutex.Lock()
+	if awaitMsgID, exists := awaitMessages[thread.AssociatedUserID]; exists {
+		delete(awaitMessages, thread.AssociatedUserID)
+		awaitMutex.Unlock()
+
+		// Удаляем заглушку из чата пользователя
+		err := c.Bot().Delete(&tele.Message{
+			ID:   awaitMsgID,
+			Chat: &tele.Chat{ID: thread.AssociatedUserID},
+		})
+		if err != nil {
+			fmt.Println("Failed to delete await message:", err)
+		}
+	} else {
+		awaitMutex.Unlock()
+	}
+
 	chatRecipient := &tele.Chat{ID: thread.AssociatedUserID}
 	options := &tele.SendOptions{}
-	
+
 	if c.Message().ReplyTo != nil {
 		replyToMessageID := getReplyToMessageID((*args)["user"].(*models.User), c.Message().ReplyTo.ID, thread, database.GetDB())
 		options.ReplyTo = &tele.Message{ID: replyToMessageID}
@@ -107,12 +133,13 @@ func RedirectFromThreadToUser(c tele.Context, args *handlers.Arg) (*handlers.Arg
 
 func RedirectFromUserToThread(c tele.Context, args *handlers.Arg) (*handlers.Arg, *e.ErrorInfo) {
 	thread := (*args)["thread"].(*models.Thread)
+	user := (*args)["user"].(*models.User)
 
 	chatRecipient := &tele.Chat{ID: thread.ChatID, Type: tele.ChatSuperGroup}
 	options := &tele.SendOptions{ThreadID: thread.ThreadID}
-	
+
 	if c.Message().ReplyTo != nil {
-		replyToMessageID := getReplyToMessageID((*args)["user"].(*models.User), c.Message().ReplyTo.ID, thread, database.GetDB())
+		replyToMessageID := getReplyToMessageID(user, c.Message().ReplyTo.ID, thread, database.GetDB())
 		options.ReplyTo = &tele.Message{ID: replyToMessageID}
 	}
 
@@ -129,12 +156,19 @@ func RedirectFromUserToThread(c tele.Context, args *handlers.Arg) (*handlers.Arg
 
 	(*args)["sent_message"] = msg
 
-	c.Send(AwaitMessageText)
+	// Отправляем заглушку пользователю
+	awaitMsg, err := c.Bot().Send(&tele.Chat{ID: user.TgID}, AwaitMessageText)
+	if err == nil && awaitMsg != nil {
+		// Сохраняем ID заглушки в map
+		awaitMutex.Lock()
+		awaitMessages[user.TgID] = awaitMsg.ID
+		awaitMutex.Unlock()
+	}
 
 	return args, e.Nil()
 }
 
-func getReplyToMessageID(user *models.User, replyToMessageID int, thread *models.Thread, db *pg.DB) int {		
+func getReplyToMessageID(user *models.User, replyToMessageID int, thread *models.Thread, db *pg.DB) int {
 	if user.IsOwner {
 		var message = &models.ResentMessage{}
 		err := db.Model(message).
@@ -148,9 +182,9 @@ func getReplyToMessageID(user *models.User, replyToMessageID int, thread *models
 		}
 		return message.SenderChatMessageID
 	}
-	
+
 	var message = &models.ResentMessage{}
-	
+
 	err := db.Model(message).
 		Where("thread_id = ?", thread.ID).
 		Where("chat_id = ?", thread.ChatID).
