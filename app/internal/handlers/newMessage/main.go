@@ -14,6 +14,8 @@ import (
 	tele "gopkg.in/telebot.v4"
 )
 
+const AwaitMessageText = "Получил твоё сообщение! Скоро отвечу ;3"
+
 func NewMessageChain() *handlers.HandlerChain {
 	return handlers.HandlerChain{}.Init(
 		10*time.Second,
@@ -41,7 +43,7 @@ func SaveResentMessage(c tele.Context, args *handlers.Arg) (*handlers.Arg, *e.Er
 	thread := (*args)["thread"].(*models.Thread)
 
 	var SenderChatMessageID, TargetChatMessageID int
-	if (*args)["user_is_owner"].(bool) {
+	if (*args)["sender_is_owner"].(bool) {
 		SenderChatMessageID = -1
 		TargetChatMessageID = c.Message().ID
 	} else {
@@ -78,7 +80,7 @@ func RedirectMessageToThread(c tele.Context, args *handlers.Arg) (*handlers.Arg,
 
 func RedirectFromThreadToUser(c tele.Context, args *handlers.Arg) (*handlers.Arg, *e.ErrorInfo) {
 	thread := (*args)["thread"].(*models.Thread)
-
+	
 	chatRecipient := &tele.Chat{ID: thread.AssociatedUserID}
 	options := &tele.SendOptions{}
 	
@@ -126,6 +128,8 @@ func RedirectFromUserToThread(c tele.Context, args *handlers.Arg) (*handlers.Arg
 	}
 
 	(*args)["sent_message"] = msg
+
+	c.Send(AwaitMessageText)
 
 	return args, e.Nil()
 }

@@ -27,14 +27,15 @@ func InitChainHandler(function chainHandlerFunc, dependsOn ...chainHandler) chai
 func (ch chainHandler) Exec(c tele.Context, args *Arg) (*Arg, *e.ErrorInfo) {
 	if ch.dependsOn != nil {
 		for _, dependsOn := range ch.dependsOn {
-			args, errInfo := dependsOn.Exec(c, args)
+			newArgs, errInfo := dependsOn.Exec(c, args)
 			if !errInfo.IsNil() {
-				return args, errInfo.PushStack()
+				return newArgs, errInfo.PushStack()
 			}
+			*args = *newArgs
 		}
 	}
 
-	return ch.Exec(c, args)
+	return ch.function(c, args)
 }
 
 type HandlerChain struct {

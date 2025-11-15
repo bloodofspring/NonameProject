@@ -1,13 +1,12 @@
 package shared
 
-// TODO: Внести возможность создавать список зависимостей для shared функций
-
 import (
 	"app/internal/handlers"
 	"app/pkg/database"
 	"app/pkg/database/models"
 	e "app/pkg/errors"
 	"fmt"
+	"math/rand"
 
 	"github.com/go-pg/pg/v10"
 	"github.com/spf13/viper"
@@ -61,14 +60,14 @@ func getThread(threadID int, chatID int64, associatedUserID int64, db *pg.DB) (*
 	var thread models.Thread
 	var err error
 
-	if chatID != -1 {
+	if threadID != 0 {
 		err = db.Model(&thread).
 			Where("thread_id = ?", threadID).
 			Where("chat_id = ?", chatID).
 			Select()
-	} else if associatedUserID != -1 {
+	} else if associatedUserID != 0 {
 		err = db.Model(&thread).
-			Where("thread_id = ?", threadID).
+			Where("chat_id = ?", chatID).
 			Where("associated_user_id = ?", associatedUserID).
 			Select()
 	} else {
@@ -86,27 +85,41 @@ func getThread(threadID int, chatID int64, associatedUserID int64, db *pg.DB) (*
 	return &thread, e.Nil()
 }
 
-func createThread(c tele.Context, chatID int64, args *handlers.Arg) (*handlers.Arg, *e.ErrorInfo) {
+func createThread(c tele.Context, targetChat *models.Chat, args *handlers.Arg) (*handlers.Arg, *e.ErrorInfo) {
+	iconIDs := []string{
+		"5386395194029515402",
+		"5355127101970194557",
+		"5350658016700013471",
+		"5350367161514732241",
+		"5309744892677727325",
+		"5350751634102166060",
+		"5309958691854754293",
+		"5235912661102773458",
+		"5413625003218313783",
+		"5357504778685392027",
+		"5310094636159607472",
+	}
+
 	t, err := c.Bot().CreateTopic(
 		&tele.Chat{
-			ID: chatID,
+			ID: targetChat.TgID,
 		},
 		&tele.Topic{
 			Name: fmt.Sprintf("@%s", c.Sender().Username),
-			// IconCustomEmojiID: "5199590728270886590",
+			IconCustomEmojiID: iconIDs[rand.Intn(len(iconIDs))],
 		},
 	)
 
 	if err != nil {
 		return args, e.FromError(err, "Failed to create topic").WithSeverity(e.Notice).WithData(map[string]any{
-			"chatID": chatID,
+			"chatID": targetChat.TgID,
 			"user": (*args)["user"],
 		})
 	}
 
 	thread := &models.Thread{
 		ThreadID: t.ThreadID,
-		ChatID: chatID,
+		ChatID: targetChat.TgID,
 		AssociatedUserID: (*args)["user"].(*models.User).TgID,
 	}
 
@@ -114,12 +127,12 @@ func createThread(c tele.Context, chatID int64, args *handlers.Arg) (*handlers.A
 	if err != nil {
 		return args, e.FromError(err, "Failed to insert thread").WithSeverity(e.Notice).WithData(map[string]any{
 			"thread": thread,
-			"chatID": chatID,
+			"chatID": targetChat.TgID,
 			"user": (*args)["user"],
 		})
 	}
 
-	(*args)["thread"] = &thread
+	(*args)["thread"] = thread
 
 	return args, e.Nil()
 }
@@ -134,15 +147,25 @@ func getOrCrateThreadFunc(c tele.Context, args *handlers.Arg) (*handlers.Arg, *e
 			return args, errInfo.PushStack()
 		}
 		
-		(*args)["thread"] = &thread
+		(*args)["thread"] = thread
 		
 		return args, e.Nil()
 	}
 
-	thread, errInfo := getThread(c.Message().ThreadID, 0, (*args)["user"].(*models.User).TgID, db)
+	var targetChat models.Chat
+	err := database.GetDB().Model(&targetChat).
+		Where("chat_owner_id = ?", (*args)["target"].(*models.User).TgID).
+		Select()
+	if err != nil {
+		return args, e.FromError(err, "Failed to select target chat").WithSeverity(e.Notice).WithData(map[string]any{
+			"target": (*args)["target"],
+		})
+	}
+
+	thread, errInfo := getThread(0, targetChat.TgID, (*args)["user"].(*models.User).TgID, db)
 
 	if errInfo.IsNil() {
-		(*args)["thread"] = &thread
+		(*args)["thread"] = thread
 		return args, e.Nil()
 	}
 
@@ -155,7 +178,7 @@ func getOrCrateThreadFunc(c tele.Context, args *handlers.Arg) (*handlers.Arg, *e
 		})
 	}
 
-	args, errInfo = createThread(c, c.Chat().ID, args)
+	args, errInfo = createThread(c, &targetChat, args)
 	if errInfo.IsNotNil() {
 		return args, errInfo.PushStack()
 	}

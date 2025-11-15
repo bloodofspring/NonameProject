@@ -29,31 +29,31 @@ func InitNewChatForUser(c tele.Context, args *handlers.Arg) (*handlers.Arg, *e.E
 	if c.Chat().Type != tele.ChatSuperGroup {
 		c.Reply("Chat should be a supergroup")
 		return args, e.NewError("chat should be a supergroup", "Chat should be a supergroup").WithSeverity(e.Ingnored).WithData(map[string]any{
-			"sender": (*args)["sender"],
+			"user": (*args)["user"],
 		})
 	}
 	
 	var chat models.Chat
 	err := db.Model(&chat).
-		Where("chat_owner_id = ?", (*args)["sender"].(*models.User).TgID).
+		Where("chat_owner_id = ?", (*args)["user"].(*models.User).TgID).
 		Select()
 
 	if err == nil {
 		c.Reply("Chat already exists. Replace with new one? (TODO: Implement)")
 		return args, e.NewError("chat already exists", "Chat already exists").WithSeverity(e.Ingnored).WithData(map[string]any{
-			"sender": (*args)["sender"],
+			"user": (*args)["user"],
 			"chat": chat,
 		})
 	}
 	
 	if err != pg.ErrNoRows {
 		return args, e.FromError(err, "Failed to select chat").WithSeverity(e.Notice).WithData(map[string]any{
-			"sender": (*args)["sender"],
+			"user": (*args)["user"],
 		})
 	}
 
 	chat = models.Chat{
-		ChatOwnerID: (*args)["sender"].(*models.User).TgID,
+		ChatOwnerID: (*args)["user"].(*models.User).TgID,
 		TgID: c.Chat().ID,
 	}
 	_, err = db.Model(&chat).Insert()

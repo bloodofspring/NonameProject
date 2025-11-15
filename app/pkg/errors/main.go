@@ -86,7 +86,7 @@ func (e *ErrorInfo) WithData(data map[string]any) *ErrorInfo {
 }
 
 func (e *ErrorInfo) IsNil() bool {
-	return e == nil || e.Err == nil || e.Severity == Ingnored
+	return e == nil || e.Err == nil
 }
 
 func (e *ErrorInfo) IsNotNil() bool {
